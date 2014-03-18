@@ -3,18 +3,17 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"time"
-	//    "io"
-	"io/ioutil"
+	//"io/ioutil"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strings"
 )
 
 var ErrNoRedirect = errors.New("No Redirect!")
-
-//"&{GET http://www.qiniu.com/favicon.ico HTTP/1.1 1 1 map[Proxy-Connection:[keep-alive] Proxy-Authorization:[SpdyProxy ps="1394902812-109215405-2169405763-1591551543", sid="b0d98b3204cf59c18363063fe74560b6"] User-Agent:[Mozilla/5.0 (iPad; CPU OS 7_1 like Mac OS X) AppleWebKit/537.51.1 (KHTML, like Gecko) CriOS/33.0.1750.15 Mobile/11D167 Safari/9537.53] Accept-Encoding:[gzip,deflate,sdch] Accept-Language:[zh-CN,zh;q=0.8,en;q=0.6]] 0x104847e0 0 [] false www.qiniu.com map[] map[] <nil> map[] 192.168.10.12:53788 http://www.qiniu.com/favicon.ico <nil>}"
 
 func defaultHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("============================")
@@ -65,7 +64,6 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Println(err)
 		if !strings.Contains(err.Error(), "No Redirect!") {
 			return
 		}
@@ -80,16 +78,24 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	data, err := ioutil.ReadAll(resp.Body)
+	writed, err := io.Copy(w, resp.Body)
 	if err != nil {
-		fmt.Println(err)
-		return
+		fmt.Println(err, resp.ContentLength, writed)
 	}
-	fmt.Println(len(string(data)))
-	w.Write(data)
+	return
+	/*
+		data, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		fmt.Println(len(string(data)))
+		w.Write(data)
+	*/
 }
 
 func main() {
+	runtime.GOMAXPROCS(runtime.NumCPU()*2 - 1)
 	http.HandleFunc("/", defaultHandler)
 	err := http.ListenAndServe(":7777", nil)
 	if err != nil {
