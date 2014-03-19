@@ -2,11 +2,12 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"io"
+	"log"
 	"net"
 	"time"
 	//"io/ioutil"
+	"crypto/tls"
 	"net/http"
 	"net/url"
 	"runtime"
@@ -15,21 +16,35 @@ import (
 
 var ErrNoRedirect = errors.New("No Redirect!")
 
+func myDial(netw, addr string) (net.Conn, error) {
+	deadline := time.Now().Add(25 * time.Second)
+	c, err := net.DialTimeout(netw, addr, time.Second*20)
+	if err != nil {
+		return nil, err
+	}
+	c.SetDeadline(deadline)
+	return c, nil
+}
+
+func noRedirect(req *http.Request, via []*http.Request) error {
+	return ErrNoRedirect
+}
+
 func defaultHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("============================")
-	fmt.Println(r)
+	log.Println("============================")
+	log.Println(r)
 	if r.URL.Scheme == "" {
 		r.URL.Scheme = "http"
 	}
 	if r.Host == "" {
-		fmt.Println("No Host")
+		log.Println("No Host")
 		return
 	}
 	if r.URL.RawQuery != "" {
 		r.URL.RawQuery = "?" + r.URL.RawQuery
 	}
 	rawurl := r.URL.Scheme + "://" + r.Host + r.URL.Path + r.URL.RawQuery
-	fmt.Println(rawurl)
+	log.Println(rawurl)
 	rurl, err := url.Parse(rawurl)
 	if err != nil {
 		panic(err)
@@ -45,22 +60,22 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 		Host:          r.Host,
 		ContentLength: r.ContentLength,
 	}
+	req.Header.Add("X-Log", "Go Proxy Send")
+	//	cert, err := tls.LoadX509KeyPair("./ssl-cert-snakeoil.pem",
+	//		"./ssl-cert-snakeoil.key")
+	//  if err != nil {
+	//	  log.Println("Cannot load certificate: [%s]", err)
+	//  }
 	tr := &http.Transport{
-		Dial: func(netw, addr string) (net.Conn, error) {
-			deadline := time.Now().Add(25 * time.Second)
-			c, err := net.DialTimeout(netw, addr, time.Second*20)
-			if err != nil {
-				return nil, err
-			}
-			c.SetDeadline(deadline)
-			return c, nil
+		Dial: myDial,
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true,
+			//			Certificates:       []tls.Certificate{cert},
 		},
 	}
 	client := &http.Client{
-		Transport: tr,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return ErrNoRedirect
-		},
+		Transport:     tr,
+		CheckRedirect: noRedirect,
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -70,8 +85,9 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 		err = nil
 	}
 	defer resp.Body.Close()
-	fmt.Println(resp)
-	fmt.Println(">>>>", resp.StatusCode)
+	resp.Header.Add("X-Log", "Go Proxy Recived")
+	log.Println(resp)
+	log.Println(">>>>", resp.StatusCode)
 	for k, v := range resp.Header {
 		for _, vv := range v {
 			w.Header().Add(k, vv)
@@ -80,25 +96,26 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(resp.StatusCode)
 	writed, err := io.Copy(w, resp.Body)
 	if err != nil {
-		fmt.Println(err, resp.ContentLength, writed)
+		log.Println(err, resp.ContentLength, writed)
 	}
 	return
 	/*
 		data, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
-			fmt.Println(err)
+			log.Println(err)
 			return
 		}
-		fmt.Println(len(string(data)))
+		log.Println(len(string(data)))
 		w.Write(data)
 	*/
 }
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	runtime.GOMAXPROCS(runtime.NumCPU()*2 - 1)
 	http.HandleFunc("/", defaultHandler)
 	err := http.ListenAndServe(":7777", nil)
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 	}
 }
