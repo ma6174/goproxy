@@ -5,9 +5,11 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 	"time"
 	//"io/ioutil"
 	"crypto/tls"
+	"encoding/base64"
 	"net/http"
 	"net/url"
 	"runtime"
@@ -15,6 +17,8 @@ import (
 )
 
 var ErrNoRedirect = errors.New("No Redirect!")
+var DwonPath = "./down/"
+var cacheDwon = make(map[string]bool)
 
 func myDial(netw, addr string) (net.Conn, error) {
 	deadline := time.Now().Add(25 * time.Second)
@@ -44,6 +48,18 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 		r.URL.RawQuery = "?" + r.URL.RawQuery
 	}
 	rawurl := r.URL.Scheme + "://" + r.Host + r.URL.Path + r.URL.RawQuery
+	urlB64 := base64.StdEncoding.EncodeToString([]byte(rawurl))
+	if _, ok := cacheDwon[urlB64]; ok {
+		fReader, err := os.Open(DwonPath + urlB64)
+		if err != nil {
+			log.Println(err)
+		} else {
+			defer fReader.Close()
+			w.Header().Add("X-Cache", "From Proxy")
+			io.Copy(w, fReader)
+			return
+		}
+	}
 	log.Println(rawurl)
 	rurl, err := url.Parse(rawurl)
 	if err != nil {
@@ -85,16 +101,33 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 		err = nil
 	}
 	defer resp.Body.Close()
+	var fWiter *os.File
+	contentType := resp.Header.Get("Content-Type")
+	log.Println("------>>>", contentType, rurl)
+	if contentType != "" {
+		if strings.HasPrefix(contentType, "image/") {
+			fWiter, err = os.Create(DwonPath + urlB64)
+			if err != nil {
+				log.Println(err)
+			} else {
+				defer fWiter.Close()
+				cacheDwon[urlB64] = true
+			}
+		}
+	}
+	mWriter := io.MultiWriter(w, fWiter)
 	resp.Header.Add("X-Log", "Go Proxy Recived")
 	log.Println(resp)
 	log.Println(">>>>", resp.StatusCode)
 	for k, v := range resp.Header {
+		log.Println(v)
 		for _, vv := range v {
+			log.Println(vv)
 			w.Header().Add(k, vv)
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	writed, err := io.Copy(w, resp.Body)
+	writed, err := io.Copy(mWriter, resp.Body)
 	if err != nil {
 		log.Println(err, resp.ContentLength, writed)
 	}
