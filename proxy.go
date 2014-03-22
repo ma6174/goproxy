@@ -112,7 +112,6 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 	var fWiter *os.File
 	contentType := resp.Header.Get("Content-Type")
-	log.Println("------>>>", contentType, rurl)
 	if contentType != "" {
 		if strings.HasPrefix(contentType, "image/") {
 			fWiter, err = os.Create(DwonPath + urlB64)
@@ -130,36 +129,18 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		mWriter = w
 	}
-	log.Println("128", resp)
 	log.Println("129>>>>", resp.StatusCode)
-	log.Println("130>>>>", resp.Header)
 	for k, v := range resp.Header {
 		for _, vv := range v {
-			log.Println("133", k, vv)
 			w.Header().Add(k, vv)
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
 	writed, err := io.Copy(mWriter, resp.Body)
 	if err != nil {
-		log.Println("140", err, resp.ContentLength, writed)
+		log.Println(err, resp.ContentLength, writed)
 	}
-	log.Println("142---", writed)
 	return
-	/*
-		data, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			log.Println(err)
-			return
-		}
-		log.Println(len(string(data)))
-		w.Write(data)
-	*/
-}
-
-func httpsHandler(w http.ResponseWriter, r *http.Request) {
-	log.Println("============================")
-	log.Println(r)
 }
 
 func main() {
@@ -175,17 +156,5 @@ func main() {
 		WriteTimeout:   10 * time.Second,
 		MaxHeaderBytes: 1 << 20,
 	}
-	//	go s.ListenAndServe()
-	mux2 := http.NewServeMux()
-	mux2.HandleFunc("/", httpsHandler)
-	s2 := &http.Server{
-		Addr:           ":7443",
-		Handler:        mux2,
-		ReadTimeout:    10 * time.Second,
-		WriteTimeout:   10 * time.Second,
-		MaxHeaderBytes: 1 << 20,
-	}
-	log.Println(s)
-	log.Println(s2)
-	log.Fatal(s2.ListenAndServeTLS("public.pem", "private.pem"))
+	log.Fatal(s.ListenAndServe())
 }
