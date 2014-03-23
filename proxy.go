@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
-	//	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -75,11 +74,6 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 		ContentLength: r.ContentLength,
 	}
 	req.Header.Add("X-Proxy", "rpi")
-	//	cert, err := tls.LoadX509KeyPair("./ssl-cert-snakeoil.pem",
-	//		"./ssl-cert-snakeoil.key")
-	//  if err != nil {
-	//	  log.Println("Cannot load certificate: [%s]", err)
-	//  }
 	tr := &http.Transport{
 		Dial: func(netw, addr string) (net.Conn, error) {
 			deadline := time.Now().Add(25 * time.Second)
@@ -93,7 +87,6 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true,
-			//Certificates:       []tls.Certificate{cert},
 		},
 	}
 	client := &http.Client{
