@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -76,8 +77,8 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 	req.Header.Add("X-Proxy", "rpi")
 	tr := &http.Transport{
 		Dial: func(netw, addr string) (net.Conn, error) {
-			deadline := time.Now().Add(25 * time.Second)
-			c, err := net.DialTimeout(netw, addr, time.Second*20)
+			deadline := time.Now().Add(24 * time.Hour)
+			c, err := net.DialTimeout(netw, addr, time.Second*60*5)
 			if err != nil {
 				return nil, err
 			}
@@ -131,9 +132,45 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(resp.StatusCode)
 	writed, err := io.Copy(mWriter, resp.Body)
 	if err != nil {
+		log.Println("<<<<<<<<<<<<<<<<<<<err")
+		log.Println(resp.StatusCode)
+		log.Println(err.Error())
+		log.Println(http.ErrHandlerTimeout)
 		log.Println(err, resp.ContentLength, writed)
 	}
 	return
+}
+
+func dl() {
+	f, err := os.OpenFile("./file.exe", os.O_RDWR|os.O_CREATE, 0666)
+	if err != nil {
+		panic(err)
+	}
+	stat, err := f.Stat()
+	if err != nil {
+		panic(err)
+	}
+	writed := stat.Size()
+	f.Seek(writed, 0)
+	fURL := "http://open.qiniudn.com/thinking-in-go.mp4"
+	req := http.Request{}
+	req.Header = http.Header{}
+	req.Header.Set("Range", "bytes="+strconv.FormatInt(writed, 10)+"-")
+	req.Method = "GET"
+	req.URL, err = url.Parse(fURL)
+	if err != nil {
+		panic(err)
+	}
+	resp, err := http.DefaultClient.Do(&req)
+	if err != nil {
+		panic(err)
+	}
+	log.Println(resp.Header)
+	written, err := io.Copy(f, resp.Body)
+	if err != nil {
+		panic(err)
+	}
+	println("written:", written)
 }
 
 func main() {
@@ -145,8 +182,8 @@ func main() {
 	s := &http.Server{
 		Addr:           ":7080",
 		Handler:        mux1,
-		ReadTimeout:    10 * time.Second,
-		WriteTimeout:   10 * time.Second,
+		ReadTimeout:    0,
+		WriteTimeout:   0,
 		MaxHeaderBytes: 1 << 20,
 	}
 	log.Fatal(s.ListenAndServe())
