@@ -33,7 +33,7 @@ th{
     text-align:left;
     padding-top:5px;
     padding-bottom:4px;
-    background-color:#A7C942;
+    background-color:#41B3B3;
     color:#ffffff;
 }
 #dl .small {
@@ -45,4 +45,7 @@ th{
 
 #dl .action {
     width: 70px;
+}
+#dl .remain{
+    width: 65px;
 }
