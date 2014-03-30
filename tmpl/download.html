@@ -1,0 +1,44 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
+    <head>
+        <meta http-equiv="Content-Type" content="text/html;charset=UTF-8" />
+        <title></title>
+
+        <link href="/static/download.css" rel="stylesheet" type="text/css" />
+
+    </head>
+    <body>
+        <form action="/dl/" method="POST">
+            <input type="text" name="url" size="30"/>
+            <input type="submit" value="下载"/>
+        </form>
+        <br />
+        Now Downloading:
+        <table id="dl">
+            <th>文件名</th>
+            <th class="small">大小</th>
+            <th class="small">速度</th>
+            <th class="small">进度</th>
+            <th>进度</th>
+            <th>下载地址</th>
+            <th class="action">操作</th>
+            <th class="time">添加时间</th>
+            <th class="small">剩余时间</th>
+            <tr>
+                <td>a.txt</td>
+                <td>100M</td>
+                <td>200k/s</td>
+                <td>42%</td>
+                <td>
+                    <div class="bar">
+                        <div style="width:42%"></div>
+                    </div>
+                </td>
+                <td>http://a.com/a.txt</td>
+                <td>下载|删除</td>
+                <td>2014-03-01 12:44:33</td>
+                <td>1h50m</td>
+            </tr>
+        </table>
+    </body>
+</html>

@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"errors"
+	"html/template"
 	"io"
 	"log"
 	"net"
@@ -41,6 +42,7 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("X-Proxy") == "rpi" {
 		log.Println("No Local Loop!")
 		w.WriteHeader(400)
+		w.Write([]byte("No Local Loop!"))
 		return
 	}
 	if r.URL.RawQuery != "" {
@@ -174,12 +176,27 @@ func dl() {
 	println("written:", written)
 }
 
+func downloadHandle(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "GET" {
+		t, err := template.ParseFiles("./tmpl/download.html")
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		t.Execute(w, nil)
+		return
+	}
+	r.ParseForm()
+	r.Form.Get("url")
+}
+
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	runtime.GOMAXPROCS(runtime.NumCPU()*2 - 1)
 
 	mux1 := http.NewServeMux()
 	mux1.HandleFunc("/", defaultHandler)
+	mux1.HandleFunc("/dl/", downloadHandle)
 	mux1.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(StaticPath))))
 	s := &http.Server{
 		Addr:           ":7080",
