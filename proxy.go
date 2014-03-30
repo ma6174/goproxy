@@ -19,6 +19,7 @@ import (
 
 var ErrNoRedirect = errors.New("No Redirect!")
 var DwonPath = "./down/"
+var StaticPath = "./static/"
 var cacheDwon = make(map[string]bool)
 
 func defaultHandler(w http.ResponseWriter, r *http.Request) {
@@ -179,6 +180,7 @@ func main() {
 
 	mux1 := http.NewServeMux()
 	mux1.HandleFunc("/", defaultHandler)
+	mux1.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(StaticPath))))
 	s := &http.Server{
 		Addr:           ":7080",
 		Handler:        mux1,
