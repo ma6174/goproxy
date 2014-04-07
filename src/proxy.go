@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"crypto/tls"
 	"encoding/base64"
 	"errors"
@@ -9,7 +10,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"os"
 	"runtime"
@@ -22,16 +22,39 @@ var ErrNoRedirect = errors.New("No Redirect!")
 var DwonPath = "./down/"
 var StaticPath = "./static/"
 var cacheDwon = make(map[string]bool)
+var ADList = make(map[string]bool)
 
-func defaultHandler(w http.ResponseWriter, r *http.Request) {
-	log.Println("============================")
-	dump, err := httputil.DumpRequest(r, true)
+func buildADList(filename string) {
+	f, err := os.Open(filename)
 	if err != nil {
-		log.Println("42", err)
+		log.Println("open ad list file failed!")
 		return
 	}
-	log.Println(string(dump))
-	log.Println("------------------")
+	buf := bufio.NewReader(f)
+	for {
+		line, err := buf.ReadString('\n')
+		if err != nil || err == io.EOF {
+			break
+		}
+		line = strings.TrimSpace(line)
+		ADList[line] = true
+	}
+	return
+}
+
+func isAdHost(host string) bool {
+	sp := strings.Split(host, ".")
+	for i := 0; i < len(sp); i++ {
+		host = strings.Join(sp[i:], ".")
+		log.Println(host)
+		if ADList[host] == true {
+			return true
+		}
+	}
+	return false
+}
+
+func genURL(r *http.Request) (url string) {
 	if r.URL.Scheme == "" {
 		r.URL.Scheme = "http"
 	}
@@ -39,32 +62,24 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 		log.Println("No Host")
 		return
 	}
-	if r.Header.Get("X-Proxy") == "rpi" {
-		log.Println("No Local Loop!")
-		w.WriteHeader(400)
-		w.Write([]byte("No Local Loop!"))
-		return
-	}
+	var rawQuery, fragment, userInfo string
 	if r.URL.RawQuery != "" {
-		r.URL.RawQuery = "?" + r.URL.RawQuery
+		rawQuery = "?" + r.URL.RawQuery
 	}
-	rawurl := r.URL.Scheme + "://" + r.Host + r.URL.Path + r.URL.RawQuery
-	urlB64 := base64.StdEncoding.EncodeToString([]byte(rawurl))
-	if _, ok := cacheDwon[urlB64]; ok {
-		fReader, err := os.Open(DwonPath + urlB64)
-		if err != nil {
-			log.Println("63", err)
-		} else {
-			defer fReader.Close()
-			w.Header().Add("X-Cache", "From Proxy")
-			io.Copy(w, fReader)
-			return
-		}
+	if r.URL.Fragment != "" {
+		fragment = "#" + r.URL.Fragment
 	}
-	log.Println(rawurl)
+	if r.URL.User != nil {
+		userInfo = r.URL.User.String()
+	}
+	url = r.URL.Scheme + userInfo + "://" + r.Host + r.URL.Path + rawQuery + fragment
+	return
+}
+
+func buildRequest(rawurl string, r *http.Request) *http.Request {
 	rurl, err := url.Parse(rawurl)
 	if err != nil {
-		panic(err)
+		return nil
 	}
 	req := &http.Request{
 		Method:        r.Method,
@@ -77,7 +92,12 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 		Host:          r.Host,
 		ContentLength: r.ContentLength,
 	}
-	req.Header.Add("X-Proxy", "rpi")
+	via := req.Header.Get("Via")
+	req.Header.Set("Via", via+", 1.1 rpi")
+	return req
+}
+
+func buildHTTPClient() *http.Client {
 	tr := &http.Transport{
 		Dial: func(netw, addr string) (net.Conn, error) {
 			deadline := time.Now().Add(24 * time.Hour)
@@ -99,6 +119,44 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 			return ErrNoRedirect
 		},
 	}
+	return client
+}
+
+func defaultHandler(w http.ResponseWriter, r *http.Request) {
+	log.Println("============================")
+	if r.Host == "127.0.0.1" || r.Host == "localhost" {
+		log.Println("No Local Loop!")
+		w.Write([]byte("No Local Loop!"))
+		return
+	}
+	rawurl := genURL(r)
+	if rawurl == "" {
+		http.Redirect(w, r, "http://browsehappy.com/", 303)
+		return
+	}
+	log.Println(rawurl)
+	if isAdHost(r.Host) {
+		log.Println("Find AD: ", rawurl)
+		return
+	}
+	urlB64 := base64.StdEncoding.EncodeToString([]byte(rawurl))
+	if _, ok := cacheDwon[urlB64]; ok {
+		fReader, err := os.Open(DwonPath + urlB64)
+		if err != nil {
+			log.Println("63", err)
+		} else {
+			defer fReader.Close()
+			w.Header().Add("X-Cache", "From Proxy")
+			io.Copy(w, fReader)
+			return
+		}
+	}
+	req := buildRequest(rawurl, r)
+	if req == nil {
+		log.Println("build request failed: wrong url: ", rawurl)
+		return
+	}
+	client := buildHTTPClient()
 	resp, err := client.Do(req)
 	if err != nil {
 		if !strings.Contains(err.Error(), "No Redirect!") {
@@ -135,11 +193,7 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(resp.StatusCode)
 	writed, err := io.Copy(mWriter, resp.Body)
 	if err != nil {
-		log.Println("<<<<<<<<<<<<<<<<<<<err")
-		log.Println(resp.StatusCode)
-		log.Println(err.Error())
-		log.Println(http.ErrHandlerTimeout)
-		log.Println(err, resp.ContentLength, writed)
+		log.Println("io.Copy failed:", err, resp.ContentLength, writed)
 	}
 	return
 }
@@ -190,10 +244,20 @@ func downloadHandle(w http.ResponseWriter, r *http.Request) {
 	r.Form.Get("url")
 }
 
-func main() {
+func init() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	runtime.GOMAXPROCS(runtime.NumCPU()*2 - 1)
+	log.Println("init...")
+	log.Println("clean cache: ", DwonPath)
+	os.RemoveAll(DwonPath)
+	log.Println("create cache dir")
+	os.Mkdir(DwonPath, 0755)
+	log.Println("build ad list")
+	buildADList("./ad_hosts.list")
+	log.Println("init finish")
+}
 
+func main() {
 	mux1 := http.NewServeMux()
 	mux1.HandleFunc("/", defaultHandler)
 	mux1.HandleFunc("/dl/", downloadHandle)
@@ -205,5 +269,6 @@ func main() {
 		WriteTimeout:   0,
 		MaxHeaderBytes: 1 << 20,
 	}
+	log.Println("start proxy server")
 	log.Fatal(s.ListenAndServe())
 }
