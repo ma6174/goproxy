@@ -95,7 +95,11 @@ func buildRequest(rawurl string, r *http.Request) *http.Request {
 		ContentLength: r.ContentLength,
 	}
 	via := req.Header.Get("Via")
-	req.Header.Set("Via", via+", 1.1 rpi")
+	if via == "" {
+		req.Header.Set("Via", "1.1 rpiup")
+	} else {
+		req.Header.Set("Via", via+", 1.1 rpiup")
+	}
 	return req
 }
 
@@ -167,6 +171,12 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 		err = nil
 	}
 	defer resp.Body.Close()
+	via := w.Header().Get("Via")
+	if via == "" {
+		w.Header().Set("Via", "1.1 rpidown")
+	} else {
+		w.Header().Set("Via", via+", 1.1 rpidown")
+	}
 	var fWiter *os.File
 	contentType := resp.Header.Get("Content-Type")
 	if contentType != "" {
@@ -242,7 +252,7 @@ func init() {
 func main() {
 	mux1 := http.NewServeMux()
 	mux1.HandleFunc("/", defaultHandler)
-	mux1.HandleFunc("/dl/", http.StripPrefix("/dl/", http.FileServer(http.Dir(StaticPath+"/aria2/"))))
+	mux1.Handle("/dl/", http.StripPrefix("/dl/", http.FileServer(http.Dir(StaticPath+"/aria2/"))))
 	mux1.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(StaticPath))))
 	s := &http.Server{
 		Addr:           ":7080",
