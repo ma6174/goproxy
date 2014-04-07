@@ -12,10 +12,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ma6174/aria2rpc"
 )
 
 var ErrNoRedirect = errors.New("No Redirect!")
@@ -198,38 +200,6 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-func dl() {
-	f, err := os.OpenFile("./file.exe", os.O_RDWR|os.O_CREATE, 0666)
-	if err != nil {
-		panic(err)
-	}
-	stat, err := f.Stat()
-	if err != nil {
-		panic(err)
-	}
-	writed := stat.Size()
-	f.Seek(writed, 0)
-	fURL := "http://open.qiniudn.com/thinking-in-go.mp4"
-	req := http.Request{}
-	req.Header = http.Header{}
-	req.Header.Set("Range", "bytes="+strconv.FormatInt(writed, 10)+"-")
-	req.Method = "GET"
-	req.URL, err = url.Parse(fURL)
-	if err != nil {
-		panic(err)
-	}
-	resp, err := http.DefaultClient.Do(&req)
-	if err != nil {
-		panic(err)
-	}
-	log.Println(resp.Header)
-	written, err := io.Copy(f, resp.Body)
-	if err != nil {
-		panic(err)
-	}
-	println("written:", written)
-}
-
 func downloadHandle(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
 		t, err := template.ParseFiles("./tmpl/download.html")
@@ -241,7 +211,17 @@ func downloadHandle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.ParseForm()
-	r.Form.Get("url")
+	uri := r.Form.Get("url")
+	aria2rpc.AddUri(uri, nil)
+}
+
+func startAria2c() {
+	cmd := "aria2c --enable-rpc --rpc-listen-all=true --rpc-allow-origin-all -c -D"
+	sp := strings.Split(cmd, " ")
+	process := exec.Command(sp[0], sp[1:]...)
+	process.Dir = "./dl"
+	process.Run()
+	log.Println("aria2c version", aria2rpc.RpcVersion, "serve at:", aria2rpc.RpcUrl)
 }
 
 func init() {
@@ -254,13 +234,15 @@ func init() {
 	os.Mkdir(DwonPath, 0755)
 	log.Println("build ad list")
 	buildADList("./ad_hosts.list")
+	log.Println("start aria2c")
+	startAria2c()
 	log.Println("init finish")
 }
 
 func main() {
 	mux1 := http.NewServeMux()
 	mux1.HandleFunc("/", defaultHandler)
-	mux1.HandleFunc("/dl/", downloadHandle)
+	mux1.HandleFunc("/dl/", http.StripPrefix("/dl/", http.FileServer(http.Dir(StaticPath+"/yaaw/"))))
 	mux1.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(StaticPath))))
 	s := &http.Server{
 		Addr:           ":7080",
