@@ -242,7 +242,7 @@ func init() {
 func main() {
 	mux1 := http.NewServeMux()
 	mux1.HandleFunc("/", defaultHandler)
-	mux1.HandleFunc("/dl/", http.StripPrefix("/dl/", http.FileServer(http.Dir(StaticPath+"/yaaw/"))))
+	mux1.HandleFunc("/dl/", http.StripPrefix("/dl/", http.FileServer(http.Dir(StaticPath+"/aria2/"))))
 	mux1.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(StaticPath))))
 	s := &http.Server{
 		Addr:           ":7080",
