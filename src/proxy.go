@@ -215,6 +215,7 @@ func doCache(urlB64 string, resp *http.Response, w http.ResponseWriter, r *http.
 		fWiter, err = os.Create(DwonPath + urlB64)
 		if err != nil {
 			log.Println("create cache file failed:", err)
+			isCache = false
 		} else {
 			defer fWiter.Close()
 		}
@@ -234,6 +235,7 @@ func doCache(urlB64 string, resp *http.Response, w http.ResponseWriter, r *http.
 	writed, err := io.Copy(mWriter, resp.Body)
 	if err != nil {
 		log.Println("io.Copy failed:", err, resp.ContentLength, writed)
+		isCache = false
 	}
 	if isCache {
 		cacheDwon[urlB64] = true
