@@ -7,24 +7,29 @@ import (
 	"errors"
 	"html/template"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/ma6174/aria2rpc"
 )
 
-var ErrNoRedirect = errors.New("No Redirect!")
-var DwonPath = "./down/"
-var StaticPath = "./static/"
-var cacheDwon = make(map[string]bool)
-var ADList = make(map[string]bool)
+var (
+	ErrNoRedirect = errors.New("No Redirect!")
+	DwonPath      = "./down/"
+	StaticPath    = "./static/"
+	cacheDwon     = make(map[string]bool)
+	ADList        = make(map[string]bool)
+)
 
 func buildADList(filename string) {
 	f, err := os.Open(filename)
@@ -48,7 +53,6 @@ func isAdHost(host string) bool {
 	sp := strings.Split(host, ".")
 	for i := 0; i < len(sp); i++ {
 		host = strings.Join(sp[i:], ".")
-		log.Println(host)
 		if ADList[host] == true {
 			return true
 		}
@@ -93,6 +97,7 @@ func buildRequest(rawurl string, r *http.Request) *http.Request {
 		Body:          r.Body,
 		Host:          r.Host,
 		ContentLength: r.ContentLength,
+		Close:         true,
 	}
 	via := req.Header.Get("Via")
 	if via == "" {
@@ -128,8 +133,123 @@ func buildHTTPClient() *http.Client {
 	return client
 }
 
+func doCache(urlB64 string, resp *http.Response, w http.ResponseWriter, r *http.Request) {
+	var fWiter *os.File
+	var mWriter io.Writer
+	var err error
+	var isCache bool
+	var maxAge int
+	cacheControl := resp.Header.Get("Cache-Control")
+	noCaches := []string{
+		"private",
+		"no-cache",
+		"no-store",
+	}
+	start := strings.Index(cacheControl, "max-age=")
+	if start != -1 {
+		var d []byte
+		for i := start + len("max-age="); i < len(cacheControl); i++ {
+			if cacheControl[i] >= '0' && cacheControl[i] <= '9' {
+				d = append(d, cacheControl[i])
+			} else {
+				break
+			}
+		}
+		maxAge, _ = strconv.Atoi(string(d))
+		if maxAge > 0 {
+			log.Println("****max-age", maxAge, cacheControl)
+			time.AfterFunc(time.Duration(maxAge)*time.Second, func() {
+				delete(cacheDwon, urlB64)
+				os.Remove(DwonPath + urlB64)
+				os.Remove(DwonPath + urlB64 + ".info")
+			})
+			isCache = true
+		}
+	}
+	expires := resp.Header.Get("Expires")
+	if expires != "" {
+		expTime, err := time.Parse(time.RFC1123, expires)
+		if err != nil {
+			log.Println("Cannot convert time:", expires)
+			expTime = time.Now().Add(time.Hour * 24)
+		}
+		lastTime := expTime.Sub(time.Now())
+		if lastTime.Seconds() > 0 && lastTime.Seconds() < float64(maxAge) {
+			log.Println("****expires", lastTime.Seconds(), expires)
+			isCache = true
+			time.AfterFunc(lastTime, func() {
+				delete(cacheDwon, urlB64)
+				os.Remove(DwonPath + urlB64)
+				os.Remove(DwonPath + urlB64 + ".info")
+			})
+		}
+	}
+	if resp.StatusCode%100 > 2 {
+		delete(cacheDwon, urlB64)
+		isCache = false
+	}
+	for _, v := range noCaches {
+		if strings.Contains(cacheControl, v) {
+			delete(cacheDwon, urlB64)
+			isCache = false
+			break
+		}
+	}
+	if r.Method != "GET" {
+		delete(cacheDwon, urlB64)
+		isCache = false
+	}
+	ct := resp.Header.Get("Content-Type")
+	if strings.Contains(ct, "text/html") {
+		delete(cacheDwon, urlB64)
+		isCache = false
+	}
+	if isCache {
+		fInfo, err := os.Create(DwonPath + urlB64 + ".info")
+		if err != nil {
+			log.Println("create cache encoding file failed:", err)
+		}
+		contentEncoding := resp.Header.Get("Content-Encoding")
+		if contentEncoding != "" {
+			fInfo.WriteString("Content-Encoding:" + contentEncoding + "\n")
+		}
+		contentType := resp.Header.Get("Content-Type")
+		if contentType != "" {
+			fInfo.WriteString("Content-Type:" + contentType + "\n")
+		}
+		fWiter, err = os.Create(DwonPath + urlB64)
+		if err != nil {
+			log.Println("create cache file failed:", err)
+		} else {
+			defer fWiter.Close()
+		}
+	}
+	if fWiter != nil {
+		mWriter = io.MultiWriter(w, fWiter)
+	} else {
+		mWriter = w
+	}
+	log.Println("resp.StatusCode:", resp.StatusCode)
+	for k, v := range resp.Header {
+		for _, vv := range v {
+			w.Header().Add(k, vv)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	writed, err := io.Copy(mWriter, resp.Body)
+	if err != nil {
+		log.Println("io.Copy failed:", err, resp.ContentLength, writed)
+	}
+	if isCache {
+		cacheDwon[urlB64] = true
+	}
+	return
+}
+
 func defaultHandler(w http.ResponseWriter, r *http.Request) {
 	log.Println("============================")
+	reqHeader, _ := httputil.DumpRequest(r, false)
+	log.Println("\n", string(reqHeader))
 	if r.Host == "127.0.0.1" || r.Host == "localhost" {
 		log.Println("No Local Loop!")
 		w.Write([]byte("No Local Loop!"))
@@ -149,10 +269,24 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 	if _, ok := cacheDwon[urlB64]; ok {
 		fReader, err := os.Open(DwonPath + urlB64)
 		if err != nil {
-			log.Println("63", err)
+			log.Println("open cache file failed", err)
 		} else {
 			defer fReader.Close()
-			w.Header().Add("X-Cache", "From Proxy")
+			finfo, err := os.Open(DwonPath + urlB64 + ".info")
+			if err == nil {
+				info, err := ioutil.ReadAll(finfo)
+				if err != nil {
+					log.Println("read data from cache file failed:", err)
+				} else {
+					sp := strings.Split(string(info), "\n")
+					for _, line := range sp[:len(sp)-1] {
+						spl := strings.Split(line, ":")
+						w.Header().Set(spl[0], spl[1])
+					}
+				}
+				finfo.Close()
+			}
+			w.Header().Set("Via", "rpi cache")
 			io.Copy(w, fReader)
 			return
 		}
@@ -171,43 +305,18 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 		err = nil
 	}
 	defer resp.Body.Close()
+	log.Println("...............")
+	respHeader, _ := httputil.DumpResponse(resp, false)
+	log.Println("\n", string(respHeader))
 	via := w.Header().Get("Via")
 	if via == "" {
 		w.Header().Set("Via", "1.1 rpidown")
 	} else {
 		w.Header().Set("Via", via+", 1.1 rpidown")
 	}
-	var fWiter *os.File
-	contentType := resp.Header.Get("Content-Type")
-	if contentType != "" {
-		if strings.HasPrefix(contentType, "image/") {
-			fWiter, err = os.Create(DwonPath + urlB64)
-			if err != nil {
-				log.Println("119", err)
-			} else {
-				defer fWiter.Close()
-				cacheDwon[urlB64] = true
-			}
-		}
-	}
-	var mWriter io.Writer
-	if fWiter != nil {
-		mWriter = io.MultiWriter(w, fWiter)
-	} else {
-		mWriter = w
-	}
-	log.Println("129>>>>", resp.StatusCode)
-	for k, v := range resp.Header {
-		for _, vv := range v {
-			w.Header().Add(k, vv)
-		}
-	}
-	w.WriteHeader(resp.StatusCode)
-	writed, err := io.Copy(mWriter, resp.Body)
-	if err != nil {
-		log.Println("io.Copy failed:", err, resp.ContentLength, writed)
-	}
-	return
+
+	doCache(urlB64, resp, w, r)
+
 }
 
 func downloadHandle(w http.ResponseWriter, r *http.Request) {
