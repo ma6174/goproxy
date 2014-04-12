@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"crypto/tls"
 	"encoding/base64"
 	"errors"
 	"html/template"
@@ -29,6 +28,7 @@ var (
 	StaticPath    = "./static/"
 	cacheDwon     = make(map[string]bool)
 	ADList        = make(map[string]bool)
+	Client        *http.Client
 )
 
 func buildADList(filename string) {
@@ -108,7 +108,7 @@ func buildRequest(rawurl string, r *http.Request) *http.Request {
 	return req
 }
 
-func buildHTTPClient() *http.Client {
+func buildHTTPClient() {
 	tr := &http.Transport{
 		Dial: func(netw, addr string) (net.Conn, error) {
 			deadline := time.Now().Add(24 * time.Hour)
@@ -119,18 +119,13 @@ func buildHTTPClient() *http.Client {
 			c.SetDeadline(deadline)
 			return c, nil
 		},
-
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true,
-		},
 	}
-	client := &http.Client{
+	Client = &http.Client{
 		Transport: tr,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return ErrNoRedirect
 		},
 	}
-	return client
 }
 
 func doCache(urlB64 string, resp *http.Response, w http.ResponseWriter, r *http.Request) {
@@ -174,7 +169,7 @@ func doCache(urlB64 string, resp *http.Response, w http.ResponseWriter, r *http.
 			expTime = time.Now().Add(time.Hour * 24)
 		}
 		lastTime := expTime.Sub(time.Now())
-		if lastTime.Seconds() > 0 && lastTime.Seconds() < float64(maxAge) {
+		if lastTime.Seconds() > 0 && lastTime.Seconds() < float64(maxAge)-5 {
 			log.Println("****expires", lastTime.Seconds(), expires)
 			isCache = true
 			time.AfterFunc(lastTime, func() {
@@ -296,8 +291,7 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 		log.Println("build request failed: wrong url: ", rawurl)
 		return
 	}
-	client := buildHTTPClient()
-	resp, err := client.Do(req)
+	resp, err := Client.Do(req)
 	if err != nil {
 		if !strings.Contains(err.Error(), "No Redirect!") {
 			return
@@ -355,6 +349,8 @@ func init() {
 	buildADList("./ad_hosts.list")
 	log.Println("start aria2c")
 	startAria2c()
+	log.Println("build http client")
+	buildHTTPClient()
 	log.Println("init finish")
 }
 
