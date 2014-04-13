@@ -179,6 +179,19 @@ func doCache(urlB64 string, resp *http.Response, w http.ResponseWriter, r *http.
 			})
 		}
 	}
+	ct := resp.Header.Get("Content-Type")
+	if strings.Contains(ct, "text/html") {
+		delete(cacheDwon, urlB64)
+		isCache = false
+	}
+	if !isCache && strings.Contains(ct, "image/") {
+		isCache = true
+		time.AfterFunc(time.Hour*24, func() {
+			delete(cacheDwon, urlB64)
+			os.Remove(DwonPath + urlB64)
+			os.Remove(DwonPath + urlB64 + ".info")
+		})
+	}
 	if resp.StatusCode%100 > 2 {
 		delete(cacheDwon, urlB64)
 		isCache = false
@@ -191,11 +204,6 @@ func doCache(urlB64 string, resp *http.Response, w http.ResponseWriter, r *http.
 		}
 	}
 	if r.Method != "GET" {
-		delete(cacheDwon, urlB64)
-		isCache = false
-	}
-	ct := resp.Header.Get("Content-Type")
-	if strings.Contains(ct, "text/html") {
 		delete(cacheDwon, urlB64)
 		isCache = false
 	}
