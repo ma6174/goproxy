@@ -26,9 +26,11 @@ var (
 	ErrNoRedirect = errors.New("No Redirect!")
 	DwonPath      = "./down/"
 	StaticPath    = "./static/"
+	cacheFN       = "cache_log"
 	cacheDwon     = make(map[string]bool)
 	ADList        = make(map[string]bool)
 	Client        *http.Client
+	CacheLog      *os.File
 )
 
 func buildADList(filename string) {
@@ -128,6 +130,18 @@ func buildHTTPClient() {
 	}
 }
 
+func addLog(urlB64 string, resp *http.Response) {
+	url, _ := base64.StdEncoding.DecodeString(urlB64)
+	info := []string{
+		time.Now().Format("2006-01-02 15:04:05"),
+		strconv.FormatInt(resp.ContentLength, 10),
+		resp.Header.Get("Content-Type"),
+		resp.Header.Get("Cache-Control"),
+		resp.Header.Get("Expires"),
+		string(url)}
+	CacheLog.WriteString(strings.Join(info, "\t") + "\n")
+}
+
 func doCache(urlB64 string, resp *http.Response, w http.ResponseWriter, r *http.Request) {
 	var fWiter *os.File
 	var mWriter io.Writer
@@ -208,6 +222,7 @@ func doCache(urlB64 string, resp *http.Response, w http.ResponseWriter, r *http.
 		isCache = false
 	}
 	if isCache {
+		addLog(urlB64, resp)
 		fInfo, err := os.Create(DwonPath + urlB64 + ".info")
 		if err != nil {
 			log.Println("create cache encoding file failed:", err)
@@ -361,6 +376,13 @@ func init() {
 	startAria2c()
 	log.Println("build http client")
 	buildHTTPClient()
+	log.Println("open log file")
+	var err error
+	CacheLog, err = os.OpenFile(cacheFN, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0660)
+	if err != nil {
+		log.Println("open log file failed:", err)
+		panic(err)
+	}
 	log.Println("init finish")
 }
 
