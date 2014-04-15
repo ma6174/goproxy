@@ -6,7 +6,6 @@ import (
 	"errors"
 	"html/template"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -27,7 +26,7 @@ var (
 	DwonPath      = "./down/"
 	StaticPath    = "./static/"
 	cacheFN       = "cache_log"
-	cacheDwon     = make(map[string]bool)
+	cacheDwon     = make(map[string]interface{})
 	ADList        = make(map[string]bool)
 	Client        *http.Client
 	CacheLog      *os.File
@@ -142,6 +141,15 @@ func addLog(urlB64 string, resp *http.Response) {
 	CacheLog.WriteString(strings.Join(info, "\t") + "\n")
 }
 
+func removeCache(urlB64 string) {
+	delete(cacheDwon, urlB64)
+	delete(cacheDwon, urlB64+".type")
+	delete(cacheDwon, urlB64+".encoding")
+	delete(cacheDwon, urlB64+".date")
+	delete(cacheDwon, urlB64+".etag")
+	os.Remove(DwonPath + urlB64)
+}
+
 func doCache(urlB64 string, resp *http.Response, w http.ResponseWriter, r *http.Request) {
 	var fWiter *os.File
 	var mWriter io.Writer
@@ -168,9 +176,7 @@ func doCache(urlB64 string, resp *http.Response, w http.ResponseWriter, r *http.
 		if maxAge > 0 {
 			log.Println("****max-age", maxAge, cacheControl)
 			time.AfterFunc(time.Duration(maxAge)*time.Second, func() {
-				delete(cacheDwon, urlB64)
-				os.Remove(DwonPath + urlB64)
-				os.Remove(DwonPath + urlB64 + ".info")
+				removeCache(urlB64)
 			})
 			isCache = true
 		}
@@ -187,9 +193,7 @@ func doCache(urlB64 string, resp *http.Response, w http.ResponseWriter, r *http.
 			log.Println("****expires", lastTime.Seconds(), expires)
 			isCache = true
 			time.AfterFunc(lastTime, func() {
-				delete(cacheDwon, urlB64)
-				os.Remove(DwonPath + urlB64)
-				os.Remove(DwonPath + urlB64 + ".info")
+				removeCache(urlB64)
 			})
 		}
 	}
@@ -201,9 +205,7 @@ func doCache(urlB64 string, resp *http.Response, w http.ResponseWriter, r *http.
 	if !isCache && strings.Contains(ct, "image/") {
 		isCache = true
 		time.AfterFunc(time.Hour*24, func() {
-			delete(cacheDwon, urlB64)
-			os.Remove(DwonPath + urlB64)
-			os.Remove(DwonPath + urlB64 + ".info")
+			removeCache(urlB64)
 		})
 	}
 	if resp.StatusCode%100 > 2 {
@@ -222,19 +224,6 @@ func doCache(urlB64 string, resp *http.Response, w http.ResponseWriter, r *http.
 		isCache = false
 	}
 	if isCache {
-		addLog(urlB64, resp)
-		fInfo, err := os.Create(DwonPath + urlB64 + ".info")
-		if err != nil {
-			log.Println("create cache encoding file failed:", err)
-		}
-		contentEncoding := resp.Header.Get("Content-Encoding")
-		if contentEncoding != "" {
-			fInfo.WriteString("Content-Encoding:" + contentEncoding + "\n")
-		}
-		contentType := resp.Header.Get("Content-Type")
-		if contentType != "" {
-			fInfo.WriteString("Content-Type:" + contentType + "\n")
-		}
 		fWiter, err = os.Create(DwonPath + urlB64)
 		if err != nil {
 			log.Println("create cache file failed:", err)
@@ -261,7 +250,15 @@ func doCache(urlB64 string, resp *http.Response, w http.ResponseWriter, r *http.
 		isCache = false
 	}
 	if isCache {
+		addLog(urlB64, resp)
 		cacheDwon[urlB64] = true
+		cacheDwon[urlB64+".encoding"] = resp.Header.Get("Content-Encoding")
+		cacheDwon[urlB64+".type"] = resp.Header.Get("Content-Type")
+		cacheDwon[urlB64+".etag"] = resp.Header.Get("Etag")
+		cacheDwon[urlB64+".date"] = resp.Header.Get("Date")
+		if cacheDwon[urlB64+".date"] == "" {
+			cacheDwon[urlB64+".data"] = time.Now().Format(time.RFC1123)
+		}
 	}
 	return
 }
@@ -287,24 +284,38 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	urlB64 := base64.StdEncoding.EncodeToString([]byte(rawurl))
 	if _, ok := cacheDwon[urlB64]; ok {
+		matchEtag := r.Header.Get("If-None-Match")
+		if matchEtag != "" && matchEtag == cacheDwon[urlB64+".etag"] {
+			log.Println("304 etag same", matchEtag)
+			w.WriteHeader(304)
+			return
+		}
+		modfiSince := r.Header.Get("If-Modified-Since")
+		if modfiSince != "" {
+			date := cacheDwon[urlB64+".date"].(string)
+			tdate, err1 := time.Parse(time.RFC1123, date)
+			tmod, err2 := time.Parse(time.RFC1123, modfiSince)
+			if err1 == nil && err2 == nil {
+				if tmod.Sub(tdate).Nanoseconds() < 0 {
+					log.Println("304 Not modify since", modfiSince, "#cache", date)
+					w.WriteHeader(304)
+					return
+				}
+			}
+		}
 		fReader, err := os.Open(DwonPath + urlB64)
 		if err != nil {
 			log.Println("open cache file failed", err)
 		} else {
 			defer fReader.Close()
-			finfo, err := os.Open(DwonPath + urlB64 + ".info")
-			if err == nil {
-				info, err := ioutil.ReadAll(finfo)
-				if err != nil {
-					log.Println("read data from cache file failed:", err)
-				} else {
-					sp := strings.Split(string(info), "\n")
-					for _, line := range sp[:len(sp)-1] {
-						spl := strings.Split(line, ":")
-						w.Header().Set(spl[0], spl[1])
-					}
-				}
-				finfo.Close()
+			if cacheDwon[urlB64+".type"] != "" {
+				w.Header().Set("Content-Type", cacheDwon[urlB64+".type"].(string))
+			}
+			if cacheDwon[urlB64+".encoding"] != "" {
+				w.Header().Set("Content-Encoding", cacheDwon[urlB64+".encoding"].(string))
+			}
+			if cacheDwon[urlB64+".etag"] != "" {
+				w.Header().Set("Etag", cacheDwon[urlB64+".etag"].(string))
 			}
 			w.Header().Set("Via", "rpi cache")
 			io.Copy(w, fReader)
