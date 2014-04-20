@@ -267,8 +267,8 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 	log.Println("============================")
 	reqHeader, _ := httputil.DumpRequest(r, false)
 	log.Println("\n", string(reqHeader))
-	if r.Host == "127.0.0.1" || r.Host == "localhost" {
-		log.Println("No Local Loop!")
+	if strings.Contains(r.Header.Get("Via"), "1.1 rpiup") {
+		log.Println("No Local Loop!--via")
 		w.Write([]byte("No Local Loop!"))
 		return
 	}
@@ -282,11 +282,18 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 		log.Println("Find AD: ", rawurl)
 		return
 	}
+	var canCache bool = true
+	if strings.Contains(r.Header.Get("Cache-Control"), "no-cache") &&
+		strings.Contains(r.Header.Get("Pragma"), "no-cache") {
+		log.Println("force refresh!")
+		canCache = false
+	}
 	urlB64 := base64.StdEncoding.EncodeToString([]byte(rawurl))
-	if _, ok := cacheDwon[urlB64]; ok {
+	if _, ok := cacheDwon[urlB64]; ok && canCache {
 		matchEtag := r.Header.Get("If-None-Match")
 		if matchEtag != "" && matchEtag == cacheDwon[urlB64+".etag"] {
 			log.Println("304 etag same", matchEtag)
+			w.Header().Set("Via", "1.1 rpi304")
 			w.WriteHeader(304)
 			return
 		}
@@ -298,6 +305,7 @@ func defaultHandler(w http.ResponseWriter, r *http.Request) {
 			if err1 == nil && err2 == nil {
 				if tmod.Sub(tdate).Nanoseconds() < 0 {
 					log.Println("304 Not modify since", modfiSince, "#cache", date)
+					w.Header().Set("Via", "1.1 rpi304")
 					w.WriteHeader(304)
 					return
 				}
