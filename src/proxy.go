@@ -51,6 +51,7 @@ func buildADList(filename string) {
 }
 
 func isAdHost(host string) bool {
+	host = strings.Split(host, ":")[0] // *:80
 	sp := strings.Split(host, ".")
 	for i := 0; i < len(sp); i++ {
 		host = strings.Join(sp[i:], ".")
