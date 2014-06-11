@@ -84,6 +84,29 @@ func genURL(r *http.Request) (url string) {
 	return
 }
 
+func getLeftSpace() int64 {
+	p := exec.Command("df")
+	out, err := p.Output()
+	if err != nil {
+		log.Fatal(err)
+	}
+	lines := strings.Split(string(out), "\n")
+	for _, line := range lines {
+		tabs := strings.Fields(line)
+		if len(tabs) == 0 {
+			continue
+		}
+		if tabs[5] == "/" {
+			left, err := strconv.ParseInt(tabs[3], 10, 64)
+			if err != nil {
+				log.Fatal("get left space failed", err, out)
+			}
+			return left
+		}
+	}
+	return -1
+}
+
 func buildRequest(rawurl string, r *http.Request) *http.Request {
 	rurl, err := url.Parse(rawurl)
 	if err != nil {
@@ -222,6 +245,11 @@ func doCache(urlB64 string, resp *http.Response, w http.ResponseWriter, r *http.
 	}
 	if r.Method != "GET" {
 		delete(cacheDwon, urlB64)
+		isCache = false
+	}
+	if resp.ContentLength > getLeftSpace()-1024*10 {
+		// left space less than 10M
+		log.Print("left space less than 10M:", getLeftSpace())
 		isCache = false
 	}
 	if isCache {
