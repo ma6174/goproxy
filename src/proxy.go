@@ -247,7 +247,7 @@ func doCache(urlB64 string, resp *http.Response, w http.ResponseWriter, r *http.
 		delete(cacheDwon, urlB64)
 		isCache = false
 	}
-	if resp.ContentLength > getLeftSpace()-1024*10 {
+	if resp.ContentLength/1024 > getLeftSpace()-1024*10 {
 		// left space less than 10M
 		log.Print("left space less than 10M:", getLeftSpace())
 		isCache = false
